@@ -1,0 +1,2233 @@
+<?php
+
+namespace App\Http\Controllers;
+use Carbon\Carbon;
+use App\Models\User;
+use App\Models\Entreprise;
+use Illuminate\Support\Str;
+use Illuminate\Http\Request;
+use Laravel\Sanctum\Sanctum;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
+use Spatie\Permission\Models\Role;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Validation\ValidationException;
+
+
+use App\Http\Controllers\BaseAuthControlleur;
+
+class AuthController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     *
+     */
+
+    //createUser
+
+    function __construct()
+    {
+        // $this->middleware('permission:create-employee', ['only' => ['createUser']]);
+        //$this->middleware('permission:update-employee', ['only' => ['updateUser']]);
+
+     //$this->middleware('role:gestionnaire', ['only' => ['createUser']]);
+        //  $this->middleware('role:gestionnaire', ['only' => ['createUser']]);
+
+        //  $this->middleware('permission:product-edit', ['only' => ['edit','update']]);
+        //  $this->middleware('permission:product-delete', ['only' => ['destroy']]);
+
+        //$this->middleware('role:employee', ['only' => ['store']]);nn
+    }
+
+    public function index()
+    {
+        //
+        $user = DB::table('users')
+            ->join('entreprise_user', 'users.id', '=', 'entreprise_user.user_id')
+            ->join('entreprises', 'entreprises.id', '=', 'entreprise_user.entreprise_id')
+            ->where('entreprises.id', Auth::user()->entreprise_id) //Auth::user()->entreprise_id $request->entreprise_id
+            ->where('status_user', 'employee')
+            ->whereNull('users.deleted_at') //not deleted
+            ->select('users.*')
+            ->distinct()
+            ->get();
+
+        $all_roles_in_database = Role::all()->pluck('name');
+
+        $all_roles_except_a_and_b = Role::whereIn('name', ['employee', 'gestionnaire', 'manager'])->get();
+
+        return response()->json([
+            // $auth,
+            'listeRole' => $all_roles_except_a_and_b,
+            // $all_roles_in_database,
+            'listeEmploye' => $user,
+        ]);
+    }
+
+    public function index1()
+    {
+        // 'status_user'=>'client',
+
+        $client = DB::table('users')
+            ->join('entreprise_user', 'users.id', '=', 'entreprise_user.user_id')
+            ->join('entreprises', 'entreprises.id', '=', 'entreprise_user.entreprise_id')
+            ->where('entreprises.id', Auth::user()->entreprise_id) //Auth::user()->entreprise_id $request->entreprise_id
+            ->where('users.status_user', 'client')
+            ->select('users.*')
+            ->get();
+
+        // $user = DB::table('users')
+        // ->join('entreprise_user', 'users.id', '=', 'entreprise_user.user_id')
+        // ->join('entreprises', 'entreprises.id', '=', 'entreprise_user.entreprise_id')
+        // ->where('entreprises.id',Auth::user()->entreprise_id)  //Auth::user()->entreprise_id $request->entreprise_id
+        // ->select('users.*',)
+        // ->get();
+
+        // $all_roles_in_database = Role::all()->pluck('name');
+
+        // $all_roles_except_a_and_b = Role::whereIn('name', ['employee', 'gestionnaire','manager'])->get();
+
+        return response()->json([
+            // $auth,
+            'client' => $client,
+            //    'listeRole'=> $all_roles_except_a_and_b,
+            //   // $all_roles_in_database,
+            //     'listeEmploye'=> $user
+        ]);
+    }
+
+    public function user_info()
+    {
+        //
+        $user_info = User::select('contact', 'email')->get();
+        return response()->json([$user_info]);
+    }
+
+    public function user_createur()
+    {
+        //
+        $user_connecte = Auth::user();
+        $user_createur = Entreprise::where('id', $user_connecte->entreprise_id)
+            ->select('created_user')
+            ->first();
+        $info_user_createur = User::where('id', $user_createur->created_user)->get();
+        return response()->json([
+            $info_user_createur,
+            // $info_user_createur,
+            // $user_entreprise
+        ]);
+    }
+
+    public function user_connecte()
+    {
+        //
+
+        $entreprise_code = Entreprise::latest()->select('code')->first();
+      
+
+
+        $user_connecte = Auth::user();
+
+        $user = User::find(Auth::user()->id);
+        $user_role = $user->getRoleNames()->first();
+        $code_entreprise = Entreprise::where('id',Auth::user()->entreprise_id)->first();
+
+        $response = [
+            'user_connecte' => $user_connecte,
+            "user_role" => $user_role,
+            "entreprise_code"=>$code_entreprise->code,
+            // $info_user_createur,
+            // $user_entreprise
+        ];
+
+        return response()->json([$response]);
+    }
+
+    public function createUser(Request $request)
+    {
+        $data = $request->validate([
+            'nom' => ['required', 'string', 'max:255'],
+            'prenoms' => ['required'],
+            'email' => ['required', 'string', 'email', 'max:255'],
+            'indicateur' => ['required'],
+            'contact' => ['required', 'string', 'max:255'],
+            'password' => ['required', 'min:8'],
+
+            //'password' => ['required'],
+        ]);
+
+        //verifier si le mail exist en temps qu'utilisateur de lentreprise
+
+        $check_mail = User::where('entreprise_id', Auth::user()->entreprise_id)
+            ->where('email', $request->email)
+            ->first();
+
+        if ($check_mail != null) {
+            return response()->json([
+                // 'check_mail'=>$check_mail,
+                'message' => "ce email est deja utilisé par un employé de l'entreprise ",
+            ]);
+        }
+
+        $abonnement = DB::table('abonnements')
+            ->join('abonnement_entreprise', 'abonnements.id', '=', 'abonnement_entreprise.abonnement_id')
+            ->join('entreprises', 'entreprises.id', '=', 'abonnement_entreprise.entreprise_id')
+            ->where('entreprises.id', Auth::user()->entreprise_id) //Auth::user()->entreprise_id $request->entreprise_id
+            ->select('abonnements.*','abonnement_entreprise.date_final')
+            ->get();
+
+        $nombre_user = User::where('entreprise_id', Auth::user()->entreprise_id)->count(); //Auth::user()->entreprise_id //  $abonnement[0]->nbr_abonnes
+
+    
+
+        if ($abonnement != null && $abonnement[0]->date_final >= Carbon::now() && $nombre_user <= 14 && $abonnement[0]->libelle == 'gratuit') {
+            $password = 'Users';
+
+              
+
+            $user = User::create([
+                'nom' => $data['nom'],
+                'prenoms' => $request['prenoms'],
+                'email' => $data['email'],
+                'contact' => $data['contact'],
+                'indicateur' => $data['indicateur'],
+                'status_user' => 'employee',
+                'password' => Hash::make($request->password),
+                'entreprise_id' => Auth::user()->entreprise_id,
+                //'password'=> $request->password,
+            ]);
+
+            // Creation de pivot
+            DB::table('entreprise_user')->insert([
+                'entreprise_id' => Auth::user()->entreprise_id, //retirer pour test avec postman
+                'user_id' => $user->id,
+            ]);
+
+            if ($request->role != null) {
+                $role = $user->assignRole($request->role);
+            } else {
+                $role = $user->assignRole('employee');
+            }
+
+            $response = [Auth::user()->id, 'user_role' => $role, 'user' => $user, 'message' => 'utilisateur creer avec succes'];
+            return response($response, 201);
+        } elseif ($abonnement != null && $abonnement[0]->date_final >= Carbon::now() && $nombre_user <= 15 && $abonnement[0]->libelle != 'gratuit') {
+            $password = 'Users';
+
+            $user = User::create([
+                'nom' => $data['nom'],
+                'prenoms' => $request['prenoms'],
+                'email' => $data['email'],
+                'contact' => $data['contact'],
+                'indicateur' => $data['indicateur'],
+                'status_user' => 'employee',
+                'password' => Hash::make($password),
+            ]);
+
+            // Creation de pivot
+            DB::table('entreprise_user')->insert([
+                'entreprise_id' => Auth::user()->entreprise_id, //retirer pour test avec postman
+                'user_id' => $user->id,
+            ]);
+
+            $role = $user->assignRole('employee');
+
+            $response = [
+                'user_role' => $role,
+                'user' => $user,
+                'message' => 'utilisateur creer avec succes',
+            ];
+            return response($response, 201);
+        } else {
+            $response = [
+                'message' => "veillez verifier le nombre d'utilisateur  ou renouvelez votre abonnement 15",
+            ];
+            return response($response, 201);
+        }
+
+        $response = [
+            'message' => "echec",
+        ];
+        return response($response, 201);
+    }
+    
+    public function updateUser(Request $request)
+    {
+        $data = $request->validate([
+            'nom' => ['required', 'string', 'max:255'],
+            'prenoms' => ['required'],
+            'email' => ['required', 'string', 'email', 'max:255'],
+            'indicateur' => ['required'],
+            'contact' => ['required', 'string', 'max:255'],
+            'password' => ['required'],
+            'role' => ['required'],
+            'password' => ['required'],
+        ]);
+
+        $abonnement = DB::table('abonnements')
+        ->join('abonnement_entreprise', 'abonnements.id', '=', 'abonnement_entreprise.abonnement_id')
+        ->join('entreprises', 'entreprises.id', '=', 'abonnement_entreprise.entreprise_id')
+        ->where('entreprises.id',Auth::user()->entreprise_id)  //Auth::user()->entreprise_id $request->entreprise_id
+        ->select('abonnements.*',)
+        ->get();
+
+       
+
+
+        // && $abonnement[0]->date_buttoire >= Carbon::now()   && $abonnement[0]->nbr_abonnes = 8
+        // && $abonnement[0]->date_buttoire >= Carbon::now() && $abonnement[0]->nbr_abonnes = 15
+            if($abonnement != null  )
+            {
+               // $password = 'Users';
+               $abonnement = DB::table('abonnements')
+            ->join('abonnement_entreprise', 'abonnements.id', '=', 'abonnement_entreprise.abonnement_id')
+            ->join('entreprises', 'entreprises.id', '=', 'abonnement_entreprise.entreprise_id')
+            ->where('entreprises.id', Auth::user()->entreprise_id) //Auth::user()->entreprise_id $request->entreprise_id
+            ->select('abonnements.*')
+            ->get();
+
+        // && $abonnement[0]->date_buttoire >= Carbon::now()   && $abonnement[0]->nbr_abonnes = 8
+        // && $abonnement[0]->date_buttoire >= Carbon::now() && $abonnement[0]->nbr_abonnes = 15
+        if ($abonnement != null) {
+            // $password = 'Users';
+
+            $user = User::find($request->user_id)->update([
+                'nom' => $data['nom'],
+                'prenoms' => $request['prenoms'],
+                'email' => $data['email'],
+                'contact' => $data['contact'],
+                'indicateur' => $data['indicateur'],
+                'password' => Hash::make($request->password),
+            ]);
+
+            $user1 = User::find($request->user_id);
+
+            //pivot
+            $user1->entreprises()->attach(Auth::user()->entreprise_id);
+
+            //Role and permission
+            $users_connect = User::where('id', $request->user_id)->first();
+
+            if ($request->role != null) {
+                $role = $users_connect->syncRoles([$request->role]); //removeRole('employee');
+                // $role1=$users_connect->assignRole($request->role);
+            }
+            //  else{
+            //     $role='pas ete modifie';
+            //  }
+
+            // $users = User::role('gestionnaire')->get();
+            // $users = User::with('roles')->where('id',$request->user_id)->get();
+
+            $response = [
+                'id' => Auth::user()->id,
+                'role' => $role,
+                'user' => $user,
+                'message' => 'utilisateur creer avec succes',
+            ];
+
+            return response($response, 201);
+        }
+
+        $response = [
+            'message' => "echec",
+        ];
+        return response($response, 201);
+    }
+}
+
+    public function register(Request $request)
+    {
+        //
+        $basecontroller = new BaseAuthControlleur ;
+
+        $data = $request->validate([
+            'nom' => ['required', 'string', 'max:255'],
+            'prenoms' => ['required'],
+            'indicateur' => ['required'],
+            'contact' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'string', 'email', 'max:255'],
+            'password' => ['required'],
+        ]);
+
+        $user = User::create([
+            'nom' => $data['nom'],
+            'prenoms' => $request['prenoms'],
+            'email' => $data['email'],
+            'contact' => $data['contact'],
+            'indicateur' => $data['indicateur'],
+            'password' => Hash::make($data['password']),
+            // 'localisation' => $request->localisation ,
+        ]);
+        /*************************************** */
+        $allpermissions = $user->getAllPermissions();
+        $email= $request->email;
+
+        /************************************** */
+     // Use other controller's method in this controller's method
+
+
+        /*
+        ,$role,$all_users_with_all_their_roles,$entreprise_check,
+        $user_connecte,$checker,
+        */
+        //   $base_side = $basecontroller->sidebar1($allpermissions, $email, );
+        $response = $basecontroller->sidebar($email,$user,$allpermissions,);
+     
+
+   
+     
+
+        
+       $role = $user->assignRole('Gestionnaire');
+       $token = $user->createToken('monappareil')->plainTextToken;
+       $response = [
+        'base_side' => $base_side,
+        'token' => $token,
+        'role' => $role,
+     ];
+       return response($response);
+
+
+
+
+
+
+
+
+
+
+        $role = $user->assignRole('Gestionnaire');
+        $token = $user->createToken('monappareil')->plainTextToken;
+        $response = [
+            'user' => $user,
+            'token' => $token,
+            'role' => $role,
+        ];
+        return response($response, 201);
+    }
+
+
+    public function login(Request $request)
+    {
+        //
+
+        $data = $request->validate([
+            'code' => ['required'],
+            'email' => ['required', 'string', 'email', 'max:255'],
+            'password' => ['required'],
+        ]);
+
+        $email = $data['email'];
+
+        $user = User::where('email', $data['email'])->first(); //Auth::user()
+
+        $role = $user->roles->pluck('name');
+
+        $allpermissions = $user->getAllPermissions();
+
+        // combiner
+        //$permission_et_nom = Arr::add(['permissions'=>$permissions[$i]], 'nom', $list[$i]->libelle);
+
+        $connected_user_permission = User::with('Permissions')
+            ->where('id', $user->id)
+            ->get();
+
+        $user_connected_details = [];
+        array_push($user_connected_details, $connected_user_permission);
+        array_push($user_connected_details, $allpermissions);
+
+        // $user_connected_details =   Arr::add(['user_info'=>$connected_user_permission ], 'permissions', $allpermissions);
+
+        $entreprise_check = DB::table('users')
+            ->join('entreprise_user', 'entreprise_user.user_id', '=', 'users.id')
+            ->join('entreprises', 'entreprise_user.entreprise_id', '=', 'entreprises.id')
+            ->where('entreprises.code', $request->code)
+            ->where('users.email', $request->email)
+            ->where('users.password', Hash::check($data['password'], 'users.password'))
+            ->select('users.*')
+            ->first();
+        // $user2 = User::where('email',$data['email'])
+        // ->where('entreprise_id',$request->entreprise_id)
+        // ->first();
+
+        if ($entreprise_check == null) {
+            return response(
+                [
+                    'message' => 'Bads creads==>company does not exist',
+                ],
+                401
+            );
+        }
+
+        if (!$user || !Hash::check($data['password'], $user->password)) {
+            return response(
+                [
+                    'message' => 'Bads creads',
+                ],
+                401
+            );
+        }
+
+        //check abonnements
+        $checker = DB::table('abonnements')
+            ->join('abonnement_module', 'abonnement_module.abonnement_id', '=', 'abonnements.id')
+            ->join('modules', 'abonnement_module.module_id', '=', 'modules.id')
+            ->where('abonnements.entreprise_id', $entreprise_check->id)
+            ->where('abonnement_module.date_buttoire', '<', Carbon::now()) //date expirer
+            ->select('modules.*')
+            ->get();
+        //**************************************************** */
+        //collecter id de l'employe et retirer toutes ses permissions
+        $all_users_with_all_their_roles = User::with('permissions')
+            ->where('entreprise_id', $entreprise_check->id)
+            ->get();
+
+        if ($all_users_with_all_their_roles != null) {
+            $user_connecte = User::find($user->id); // trouver l'utiliseur en processus de connexion
+            //trouver les permissions rataché a un module
+            $user_connecte->revokePermissionTo([]); //extraire les permissions rattachées aux modules
+        }
+
+        $sideperm = $user_connected_details[1];
+        $permissionsFront = [];
+        for ($i = 0; $i < count($sideperm); $i++) {
+            array_push($permissionsFront, $sideperm[$i]->name);
+        }
+
+
+        /******************************************/
+
+        $basecontroller = new BaseAuthControlleur ;
+
+        // Use other controller's method in this controller's method
+        /*
+        $role,$all_users_with_all_their_roles,$entreprise_check,
+       $user_connecte,$checker,
+        */
+       $response = $basecontroller->sidebar($email,$user,$allpermissions,);
+
+        // $response = [
+        //     'role' => $role,
+        //     'user_connected_details' => $user_connected_details,
+        //     $all_users_with_all_their_roles,
+        //     'allpermissions' => $allpermissions,
+        //     //'sidebar' => $sidebar,
+        //     //'jojo'=>$jojo,
+        //     'entre' => $entreprise_check->id,
+        //     'connected_user_permission' => $connected_user_permission,
+        //     'user_connecte' => $user_connecte,
+        //     'all_users_with_all_their_roles' => $all_users_with_all_their_roles,
+        //     'checker' => $checker,
+        //     'user' => $user,
+        //     'token' => $token,
+        // ];
+
+        // return response($response, 201);
+
+         return response()->json( $response );
+
+
+        /*****************************************/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        // --------------------------------------------------------------------------------------------------------------
+
+        // les liens dans la sidebar du module facture
+        // $facture = [];
+        // $devis = [];
+        // $relance = [];
+        // $versement = [];
+        // $taxe = [];
+        // for ($i = 0; $i < count($permissionsFront); $i++) {
+        //     if (strpos($permissionsFront[$i], 'facture')) {
+        //         array_push($facture, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'devis')) {
+        //         array_push($devis, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'relance')) {
+        //         array_push($relance, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'versement')) {
+        //         array_push($versement, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'taxe')) {
+        //         array_push($taxe, $permissionsFront[$i]);
+        //     }
+        // }
+        // if (count($facture) > 0 || count($devis) > 0 || count($versement) > 0 || count($relance) > 0 || count($taxe) > 0) {
+        //     if (count($facture) > 0) {
+        //         $factureChildren = [
+        //             'title' => "Facture",
+        //             'route' => "FactureList",
+        //             'icon' => "FileTextIcon",
+        //         ];
+        //     }
+        //     if (count($devis) > 0) {
+        //         $devisChildren = [
+        //             'title' => "Devis",
+        //             'route' => "",
+        //             'icon' => "FileMinusIcon",
+        //         ];
+        //     }
+        //     if (count($versement) > 0) {
+        //         $versementChildren = [
+        //             'title' => "Versement",
+        //             'route' => "versements",
+        //             'icon' => "DollarSignIcon",
+        //         ];
+        //     }
+        //     if (count($taxe) > 0) {
+        //         $taxeChildren = [
+        //             'title' => "Taxe",
+        //             'route' => "taxes",
+        //             'icon' => "PaperclipIcon",
+        //         ];
+        //     }
+        //     if (count($relance) > 0) {
+        //         $relanceChildren = [
+        //             'title' => "Relance",
+        //             'route' => "relance",
+        //             'icon' => "RotateCwIcon",
+        //         ];
+        //     }
+        //     $childrenFacturation = [];
+        //     if (isset($factureChildren)) {
+        //         array_push($childrenFacturation, $factureChildren);
+        //     }
+        //     if (isset($devisChildren)) {
+        //         array_push($childrenFacturation, $devisChildren);
+        //     }
+        //     if (isset($taxeChildren)) {
+        //         array_push($childrenFacturation, $taxeChildren);
+        //     }
+        //     if (isset($relanceChildren)) {
+        //         array_push($childrenFacturation, $relanceChildren);
+        //     }
+        //     if (isset($versementChildren)) {
+        //         array_push($childrenFacturation, $versementChildren);
+        //     }
+        //     $facturation = [
+        //         'title' => 'Facturation',
+        //         'icon' => "LayersIcon",
+        //         'children' => $childrenFacturation,
+        //     ];
+        // }
+        // //Facturation children
+        // $childrenFacturation = [];
+        // if (isset($factureChildren)) {
+        //     array_push($childrenFacturation, $factureChildren);
+        // }
+        // if (isset($devisChildren)) {
+        //     array_push($childrenFacturation, $devisChildren);
+        // }
+        // if (isset($taxeChildren)) {
+        //     array_push($childrenFacturation, $taxeChildren);
+        // }
+        // if (isset($relanceChildren)) {
+        //     array_push($childrenFacturation, $relanceChildren);
+        // }
+        // if (isset($versementChildren)) {
+        //     array_push($childrenFacturation, $versementChildren);
+        // }
+        // $facturation = [
+        //     'title' => 'Facturation',
+        //     'icon' => "LayersIcon",
+        //     'children' => $childrenFacturation,
+        // ];
+
+        // // --------------------------------------------------------------------------------------------------------------
+
+        // //Module Trésorerie liens de la side bar
+        // $depense = [];
+        // $transaction = [];
+        // $compte = [];
+        // $emprunt = [];
+        // for ($i = 0; $i < count($permissionsFront); $i++) {
+        //     if (strpos($permissionsFront[$i], 'depense')) {
+        //         array_push($depense, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'transaction')) {
+        //         array_push($transaction, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'compte')) {
+        //         array_push($compte, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'emprunt')) {
+        //         array_push($emprunt, $permissionsFront[$i]);
+        //     }
+        // }
+        // if (count($depense) > 0 || count($transaction) > 0 || count($compte) > 0 || count($emprunt) > 0) {
+        //     if (count($depense) > 0) {
+        //         $depenseChildren = [
+        //             'title' => "Dépense",
+        //             'route' => "depenses",
+        //             'icon' => "CornerLeftUpIcon",
+        //         ];
+        //     }
+        //     if (count($transaction) > 0) {
+        //         $transactionChildren = [
+        //             'title' => "Transaction",
+        //             'route' => "",
+        //             'icon' => "TrendingUpIcon",
+        //         ];
+        //     }
+        //     if (count($compte) > 0) {
+        //         $compteChildren = [
+        //             'title' => "Compte",
+        //             'route' => "",
+        //             'icon' => "LockIcon",
+        //         ];
+        //     }
+
+        //     $budgetChildren = [
+        //         'title' => "Budget",
+        //         'route' => "",
+        //         'icon' => "LayersIcon",
+        //     ];
+
+        //     if (count($emprunt) > 0) {
+        //         $empruntChildren = [
+        //             'title' => "Emprunt",
+        //             'route' => "emprunt",
+        //             'icon' => "CornerRightDownIcon",
+        //         ];
+        //     }
+        // }
+        // //Trésorrerie Children
+        // $childrenTresorerie = [];
+        // if (isset($depenseChildren)) {
+        //     array_push($childrenTresorerie, $depenseChildren);
+        // }
+        // if (isset($transactionChildren)) {
+        //     array_push($childrenTresorerie, $transactionChildren);
+        // }
+        // if (isset($compteChildren)) {
+        //     array_push($childrenTresorerie, $compteChildren);
+        // }
+        // if (isset($budgetChildren)) {
+        //     array_push($childrenTresorerie, $budgetChildren);
+        // }
+        // if (isset($empruntChildren)) {
+        //     array_push($childrenTresorerie, $empruntChildren);
+        // }
+
+        // $tresorerie = [
+        //     'title' => 'Trésorerie',
+        //     'icon' => "DollarSignIcon",
+        //     'children' => $childrenTresorerie,
+        // ];
+        // // --------------------------------------------------------------------------------------------------------------
+
+        // //Module Catalogue liens de la sidebar
+        // $article = [];
+        // for ($i = 0; $i < count($permissionsFront); $i++) {
+        //     if (strpos($permissionsFront[$i], 'article')) {
+        //         array_push($article, $permissionsFront[$i]);
+        //     }
+        // }
+
+        // //Catalogue Children
+        // if (count($article) > 0) {
+        //     if (count($article) > 0) {
+        //         $articleChildren = [
+        //             'title' => "Article",
+        //             'route' => "articles",
+        //             'icon' => "ShoppingBagIcon",
+        //         ];
+        //     }
+
+        //     $codepromoChildren = [
+        //         'title' => "Code promo",
+        //         'route' => "",
+        //         'icon' => "TagIcon",
+        //     ];
+
+        //     $categorieChildren = [
+        //         'title' => "Catégorie d'article",
+        //         'route' => "",
+        //         'icon' => "GridIcon",
+        //     ];
+
+        //     $packChildren = [
+        //         'title' => "Pack",
+        //         'route' => "",
+        //         'icon' => "CopyIcon",
+        //     ];
+        // }
+        // $childrenCatalogue = [];
+        // if (isset($articleChildren)) {
+        //     array_push($childrenCatalogue, $articleChildren);
+        // }
+        // if (isset($codepromoChildren)) {
+        //     array_push($childrenCatalogue, $codepromoChildren);
+        // }
+        // if (isset($categorieChildren)) {
+        //     array_push($childrenCatalogue, $categorieChildren);
+        // }
+        // if (isset($packChildren)) {
+        //     array_push($childrenCatalogue, $packChildren);
+        // }
+
+        // $catalogue = [
+        //     'title' => 'Catalogue',
+        //     'icon' => "ShoppingBagIcon",
+        //     'children' => $childrenCatalogue,
+        // ];
+
+        // // --------------------------------------------------------------------------------------------------------------
+
+        // //Module CRM liens de la sidebar
+        // $client = [];
+        // $prospection = [];
+        // $prospect = [];
+        // $fournisseur = [];
+        // for ($i = 0; $i < count($permissionsFront); $i++) {
+        //     if (strpos($permissionsFront[$i], 'client')) {
+        //         array_push($client, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'prospection')) {
+        //         array_push($prospection, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'prospect')) {
+        //         array_push($prospect, $permissionsFront[$i]);
+        //     }
+        //     if (strpos($permissionsFront[$i], 'fournisseur')) {
+        //         array_push($fournisseur, $permissionsFront[$i]);
+        //     }
+        // }
+        // if (count($client) > 0 || count($prospection) > 0 || count($prospect) > 0 || count($fournisseur) > 0) {
+        //     if (count($client) > 0) {
+        //         $clientChildren = [
+        //             'title' => "Client",
+        //             'route' => "clients",
+        //             'icon' => "UserCheckIcon",
+        //         ];
+        //     }
+        //     if (count($prospection) > 0) {
+        //         $prospectionChildren = [
+        //             'title' => "Prospection",
+        //             'route' => "prospection",
+        //             'icon' => "Minimize2Icon",
+        //         ];
+        //     }
+        //     if (count($prospect) > 0) {
+        //         $prospectChildren = [
+        //             'title' => "Prospect",
+        //             'route' => "prospect",
+        //             'icon' => "MehIcon",
+        //         ];
+        //     }
+        //     if (count($fournisseur) > 0) {
+        //         $fournisseurChildren = [
+        //             'title' => "Fournisseur",
+        //             'route' => "fournisseurs",
+        //             'icon' => "TruckIcon",
+        //         ];
+        //     }
+        // }
+        // $childrenCRM = [];
+        // if (isset($clientChildren)) {
+        //     array_push($childrenCRM, $clientChildren);
+        // }
+        // if (isset($prospectionChildren)) {
+        //     array_push($childrenCRM, $prospectionChildren);
+        // }
+        // if (isset($prospectChildren)) {
+        //     array_push($childrenCRM, $prospectChildren);
+        // }
+        // if (isset($fournisseurChildren)) {
+        //     array_push($childrenCRM, $fournisseurChildren);
+        // }
+
+        // $crm = [
+        //     'title' => 'CRM',
+        //     'icon' => "UsersIcon",
+        //     'children' => $childrenCRM,
+        // ];
+        // // --------------------------------------------------------------------------------------------------------------
+        // //Entreprise les liens de la sidebar
+
+        //     $personnel = [];
+        //     $infopersonnel = [];
+        //     $module = [];
+        //     $historiquefacture = [];
+        //     $departement = [];
+        //     $agence = [];
+        //     $projet = [];
+
+        //     for ($i = 0; $i < count($permissionsFront); $i++) {
+        //         if (strpos($permissionsFront[$i], 'personnel')) {
+        //             array_push($personnel, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'infopersonnel')) {
+        //             array_push($infopersonnel, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'achatmodule')) {
+        //             array_push($module, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'historiquefacture')) {
+        //             array_push($historiquefacture, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'departement')) {
+        //             array_push($departement, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'agence')) {
+        //             array_push($agence, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'projet')) {
+        //             array_push($projet, $permissionsFront[$i]);
+        //         }
+        //     }
+        //     if (count($personnel) > 0 || count($infopersonnel) > 0 || count($module) > 0 || count($historiquefacture) > 0  || count($departement) > 0  || count($agence) > 0  || count($projet) > 0) {
+        //         if (count($personnel) > 0) {
+        //             $personnelChildren = [
+        //                 'title' => "Personnel",
+        //                 'route' => "employes",
+        //                 'icon' => "UserIcon",
+        //             ];
+        //         }
+        //         if (count($infopersonnel) > 0) {
+        //             $infopersonnelChildren = [
+        //                 'title' => "Info entreprise",
+        //                 'route' => "",
+        //                 'icon' => "FolderIcon",
+        //             ];
+        //         }
+        //         if (count($module) > 0) {
+        //             $moduleChildren = [
+        //                 'title' => "Module",
+        //                 'route' => "",
+        //                 'icon' => "CommandIcon",
+        //             ];
+        //         }
+        //         if (count($historiquefacture) > 0) {
+        //             $historiquefactureChildren = [
+        //                 'title' => "Historique des factures",
+        //                 'route' => "",
+        //                 'icon' => "LayersIcon",
+        //             ];
+        //         }
+        //         if (count($departement) > 0) {
+        //             $departementChildren = [
+        //                 'title' => "Département",
+        //                 'route' => "",
+        //                 'icon' => "LayoutIcon",
+        //             ];
+        //         }
+        //         if (count($agence) > 0) {
+        //             $agenceChildren = [
+        //                 'title' => "Agence",
+        //                 'route' => "",
+        //                 'icon' => "MapIcon",
+        //             ];
+        //         }
+        //         if (count($projet) > 0) {
+        //             $projetChildren = [
+        //                 'title' => "Projet",
+        //                 'route' => "",
+        //                 'icon' => "PlusSquareIcon",
+        //             ];
+        //         }
+        //     }
+        //     $childrenEntreprise = [];
+        //     if (isset($personnelChildren)) {
+        //         array_push($childrenEntreprise, $personnelChildren);
+        //     }
+        //     if (isset($infopersonnelChildren)) {
+        //         array_push($childrenEntreprise, $infopersonnelChildren);
+        //     }
+        //     if (isset($moduleChildren)) {
+        //         array_push($childrenEntreprise, $moduleChildren);
+        //     }
+        //     if (isset($historiquefactureChildren)) {
+        //         array_push($childrenEntreprise, $historiquefactureChildren);
+        //     }
+        //     if (isset($departementChildren)) {
+        //         array_push($childrenEntreprise, $departementChildren);
+        //     }
+        //     if (isset($agenceChildren)) {
+        //         array_push($childrenEntreprise, $agenceChildren);
+        //     }
+        //     if (isset($projetChildren)) {
+        //         array_push($childrenEntreprise, $projetChildren);
+        //     }
+
+        //     $entreprise = [
+        //         'title' => 'Entreprise',
+        //         'icon' => "BriefcaseIcon",
+        //         'children' => $childrenEntreprise,
+        //     ];
+        // // --------------------------------------------------------------------------------------------------------------
+        //     //Ediqia liens de la sidebar
+        //     $roles = [];
+        //     $permission = [];
+        //     $modules = [];
+        //     $parametre = [];
+        //     $typeparametre = [];
+
+        //     for ($i = 0; $i < count($permissionsFront); $i++) {
+        //         if (strpos($permissionsFront[$i], 'role')) {
+        //             array_push($roles, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'permission')) {
+        //             array_push($permission, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'module')) {
+        //             array_push($modules, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'parametre')) {
+        //             array_push($parametre, $permissionsFront[$i]);
+        //         }
+        //         if (strpos($permissionsFront[$i], 'typeparametre')) {
+        //             array_push($typeparametre, $permissionsFront[$i]);
+        //         }
+        //     }
+        //     if (count($roles) > 0 || count($permission) > 0 || count($modules) > 0 || count($parametre) > 0 || count($typeparametre) > 0) {
+        //         if (count($roles) > 0) {
+        //             $rolesChildren = [
+        //                 'title' => "Rôles",
+        //                 'route' => "",
+        //                 'icon' => "FramerIcon",
+        //             ];
+        //         }
+        //         if (count($permission) > 0) {
+        //             $permissionChildren = [
+        //                 'title' => "Permissions",
+        //                 'route' => "",
+        //                 'icon' => "KeyIcon",
+        //             ];
+        //         }
+        //         if (count($modules) > 0) {
+        //             $modulesChildren = [
+        //                 'title' => "Modules",
+        //                 'route' => "",
+        //                 'icon' => "CommandIcon",
+        //             ];
+        //         }
+        //         if (count($parametre) > 0) {
+        //             $parametreChildren = [
+        //                 'title' => "Paramètres",
+        //                 'route' => "",
+        //                 'icon' => "SettingsIcon",
+        //             ];
+        //         }
+        //         if (count($typeparametre) > 0) {
+        //             $typeparametreChildren = [
+        //                 'title' => "Type paramètres",
+        //                 'route' => "",
+        //                 'icon' => "ServerIcon",
+        //             ];
+        //         }
+        //     }
+        //     $childrenEdiqia = [];
+        //     if (isset($rolesChildren)) {
+        //         array_push($childrenEdiqia, $rolesChildren);
+        //     }
+        //     if (isset($permissionChildren)) {
+        //         array_push($childrenEdiqia, $permissionChildren);
+        //     }
+        //     if (isset($modulesChildren)) {
+        //         array_push($childrenEdiqia, $modulesChildren);
+        //     }
+        //     if (isset($parametreChildren)) {
+        //         array_push($childrenEdiqia, $parametreChildren);
+        //     }
+        //     if (isset($typeparametreChildren)) {
+        //         array_push($childrenEdiqia, $typeparametreChildren);
+        //     }
+
+        //     $ediqia = [
+        //         'title' => 'Ediqia',
+        //         'icon' => "ZapIcon",
+        //         'children' => $childrenEdiqia,
+        //     ];
+
+        // // --------------------------------------------------------------------------------------------------------------
+
+
+        // $sidebar = [['title' => 'Tableau de bord', 'route' => "home", 'icon' => "HomeIcon"]];
+        // array_push($sidebar, $facturation);
+        // array_push($sidebar, $tresorerie);
+        // array_push($sidebar, $catalogue);
+        // array_push($sidebar, $crm);
+        // array_push($sidebar, $entreprise);
+        // array_push($sidebar, $ediqia);
+        // // --------------------------------------------------------------------------------------------------------------
+
+
+        // //end check abonnements
+
+        // $token = $user->createToken('monappareil')->plainTextToken;
+
+        // // $all_users_with_all_their_roles = User::with('permissions')->where('id',$user->id)->get();
+        // // // $list=DB::table('nom_permissions')->select('libelle')->get();
+
+        // //    for($i=0;$i<count($list);$i++)
+        // //    {
+        // //        $list2[$i] =  $list[$i]->libelle;
+        // //        $permissions[$i] = Permission::where('name','like' ,'%-'.$list2[$i])->get();
+        // //        //$permission_et_nom[$i] = Arr::add(['permissions'=>$permissions[$i]], 'nom', $list[$i]->libelle);
+        // //        if(count($permissions)>0){
+
+        // //            $factureChildren[$i] = [
+        // //                'title'=> $list[$i]->libelle,
+        // //                'route'=> "FactureList", //doit etre dynamic
+        // //                'icon'=> "FileTextIcon", //doit etre dynamic
+        // //            ];
+
+        // //        }
+
+        // //    }
+
+        // $response = [
+        //     'role' => $role,
+        //     'user_connected_details' => $user_connected_details,
+        //     $all_users_with_all_their_roles,
+        //     'allpermissions' => $allpermissions,
+        //     'sidebar' => $sidebar,
+        //     'entre' => $entreprise_check->id,
+        //     'connected_user_permission' => $connected_user_permission,
+        //     'user_connecte' => $user_connecte,
+        //     'all_users_with_all_their_roles' => $all_users_with_all_their_roles,
+        //     'checker' => $checker,
+        //     'user' => $user,
+        //     'token' => $token,
+        // ];
+
+        // return response($response, 201);
+    }
+
+    public function reinitUser(Request $request)
+    {
+        //reinitialiser password
+
+        $data = $request->validate([
+            'email' => ['required', 'string', 'email', 'max:255'],
+        ]);
+
+        $users = DB::table('users')
+            ->join('entreprise_user', 'users.id', '=', 'entreprise_user.user_id')
+            ->join('entreprises', 'entreprises.id', '=', 'entreprise_user.entreprise_id')
+            ->where('entreprises.id', 1) //Auth::user()->entreprise_id
+            ->where('users.email', $request->email)
+            ->select('users.*')
+            ->get();
+
+        // return[
+        //     'message'=>$users,
+        //   ];
+
+        $password = 'Users';
+        if ($users != null) {
+            $user = User::find($users[0]->id)->update([
+                'password' => Hash::make($password),
+            ]);
+
+            return [
+                'message' => 'reinitialiser avec succes 111',
+            ];
+        } else {
+            return [
+                'message' => 'aucun Ulitilisateur existe pour ce mail',
+            ];
+        }
+
+        return [
+            'message' => 'Echec reinitialiser ',
+        ];
+        //
+    }
+
+    public function logout(Request $request)
+    {
+        auth()
+            ->user()
+            ->tokens()
+            ->delete();
+        return [
+            'message' => 'deconnexion reussi',
+        ];
+        //
+    }
+
+    public function loginOriginal(Request $request)
+    {
+        //Validation
+        $data = $request->validate([
+            // 'code'=> ['required'],
+            'email' => ['required', 'string', 'email', 'max:255'],
+            'password' => ['required'],
+        ]);
+
+        //validation from tables ==>join *'entreprises.email'
+        $users_info = DB::table('users')
+            ->join('entreprise_user', 'entreprise_user.user_id', '=', 'users.id')
+            ->join('entreprises', 'entreprise_user.entreprise_id', '=', 'entreprises.id')
+            ->where('entreprises.code', $request->code)
+            ->where('users.email', $request->email)
+            ->where('users.password', Hash::check($data['password'], 'users.password'))
+            ->select('users.*')
+            ->first();
+
+        if ($users_info == null) {
+            return response(
+                [
+                    'message' => 'Bads creads => (Incorrect details)= incorrect entreprise code',
+                ],
+                401
+            );
+        }
+
+        if ($users_info != null) {
+            //verifying username and password
+            $user = User::where('email', $data['email'])->first();
+            if (!$user || !Hash::check($data['password'], $user->password)) {
+                return response(
+                    [
+                        'message' => 'Bads creds  ==> email ou password incorrect',
+                    ],
+                    401
+                );
+            }
+            $usertest = User::where('id', $users_info->id)->get(); //connected user
+            //  $role=$user->assignRole('Gestionnaire');  //assigning role
+            $token = $user->createToken('monappareil')->plainTextToken; //token
+
+            return response(
+                [
+                    // 'role'=>$role,
+                    'token' => $token,
+                    'message' => 'cest zo dans carton',
+                ],
+                401
+            );
+        }
+
+        // $role=$user->assignRole('Gestionnaire');
+        // $token = $user->createToken('monappareil')->plainTextToken;
+
+        // $response=[
+        //     // Auth::user()
+        // 'test'=>$users_info,
+        // 'user'=>$user,
+        // 'token'=>$token,
+        // //'role'=>$role
+        // ];
+
+        //return response($response,201);
+    }
+
+    // public function reset_user(){
+
+    //     Validator::make($input, [
+    //         'password' => $this->passwordRules(),
+    //     ])->validate();
+
+    //     $user->forceFill([
+    //         'password' => Hash::make($input['password']),
+    //     ])->save();
+    // }
+
+    public function form_email()
+    {
+        return view('auth.passwords.email');
+    }
+
+    public function email_reset_password(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email|exists:users',
+        ]);
+
+        $token = Str::random(64);
+
+        // // $token->ExpireIn(Carbon::now()->addWeek());
+        // $token=Sanctum::tokenExpireIn(Carbon::now()->addWeek());
+
+        DB::table('password_resets')->insert([
+            'email' => $request->email,
+            'token' => $token,
+            'created_at' => Carbon::now(),
+        ]);
+
+        //   Mail::send('auth.emailPassword', ['token' => $token], function($message) use($request){
+        //     $message->to($request->email);
+        //     $message->subject('Reintialiser le mot de passe');
+        // });
+
+        return response()->json(
+            [
+                'token' => $token,
+                'message' => 'Nous avons envoyé votre lien de réinitialisation de mot de passe par e-mail !',
+            ],
+            200
+        );
+    }
+
+    public function show_token($token)
+    {
+        return response()->json([
+            'token' => $token,
+        ]);
+    }
+
+    public function reset_password(Request $request)
+    {
+        $request->validate([
+            // 'email' => ['required', 'string', 'email', 'max:255'],
+            'password' => ['required'],
+        ]);
+
+        $updatePassword = DB::table('password_resets')
+            ->where([
+                'email' => $request->email,
+                'token' => $request->token,
+            ])
+            ->first();
+
+        if ($updatePassword == null) {
+            return response()->json(['message' => 'token invalide'], 201);
+        }
+        if ($updatePassword == true) {
+            $user = User::where('email', $request->email)->update(['password' => Hash::make($request->password)]);
+
+            DB::table('password_resets')
+                ->where(['email' => $request->email])
+                ->delete();
+
+            return response()->json(['message' => 'password reintialisé']);
+        }
+    }
+
+    public function destroy(Request $request)
+    {
+        //
+        $user = User::find($request->id)->Forcedelete();
+        return response()->json([
+            'message' => 'suppression reussi',
+        ]);
+    }
+}
+
+// public function loginOriginal(Request $request)
+// {
+//     //
+//     $data = $request->validate([
+//         // 'code'=> ['required'],
+//         'email' => ['required', 'string', 'email', 'max:255'],
+//         'password' => ['required'],
+//     ]);
+
+//     //$code_test = DB::table('users')->where('IdCompte',$request->code)->first();
+//     $code_test = DB::table('entreprises')->where('code',$request->code)->first();
+
+//     if( !isset($request->code)  )
+//     {
+//         $created_user_id = DB::table('entreprises')->select('created_user','code')->where('code',$request->code)->first();
+//         $user = User::where('email',$data['email'])->first();
+//             if($user){$token = $user->createToken('monappareil')->plainTextToken;}else{return response([
+//                 'message'=>'veillez creer un compte svp',
+//             ],401);}
+//             //$token = $user->createToken('monappareil')->plainTextToken;
+//         if($created_user_id != " " ){
+//             return response([
+//                 'message'=>'doit creer une entreprise obligatoirement',
+//                 'token' => $token,
+//             ],401);
+//         }else{
+//             if( $created_user_id->code == $request->code ){
+//                 if (!$user || !Hash::check($data['password'],$user->password))
+//                 {
+//                     return response([
+//                         'message'=>'Bads creads'
+//                     ],401);
+//                 }
+//                 $role=$user->assignRole('Gestionnaire');
+//                 $token = $user->createToken('monappareil')->plainTextToken;
+//                 $response=[
+//                 'sans',
+//                 'user'=>$user,
+//                 'token'=>$token,
+//                 'role'=>$role
+//                 ];
+//                 return response($response,201);
+//             }
+//         }
+//     }else{// code entreprise id saisie
+//         if($code_test == " " )
+//         {// fausse entreprise_id
+//             $response=[
+//                 $code_test,
+//                 'code saisie mais bad creds nnn',
+//                 'message' => 'information incorrect, veillez renseillez tous les champs ',
+//             ];
+//             return response($response,201);
+//         }else{// connect
+
+//                 $entreprise_id = DB::table('entreprises')->where('code',$request->code)
+//                                                          ->first();   //id entreprise
+
+//                 if( $entreprise_id != null )
+//                 {
+
+//                     $user_id = DB::table('entreprise_user')->where('entreprise_id',$entreprise_id->id)
+//                                                             ->first(); // id user de l'entreprise
+
+//                     if( $user_id != null ){
+//                         $user = User::where('id',$user_id->user_id)->first();
+//                         if( $user != null   ){
+//                             if (!$user || !Hash::check($data['password'],$user->password))
+//                             {
+//                                 return response([
+//                                     'message'=>'Bads creads'
+//                                 ],401);
+//                             }
+//                             $role=$user->assignRole('Gestionnaire');
+//                             $token = $user->createToken('monappareil')->plainTextToken;
+//                             $response=[
+//                                 'avec avec',
+//                                 'message' => ' felicitation',
+//                                 'user'=>$user,
+//                                 'entreprise_id'=>$entreprise_id,
+//                                 'token'=>$token,
+//                                 'role'=>$role,
+
+//                             ];
+//                             return response($response,201);
+
+//                         }else{
+//                             return[
+//                                 // $entreprise_id ,
+//                                 'message'=>'that user does not exist dans notre base de donnees',
+//                             ];
+
+//                         }
+//                     }else{
+//                         return[
+//                             // $entreprise_id ,
+//                             'message'=>'user bad creds',
+//                         ];
+
+//                     }
+
+//                     // $user = User::where('email',$data['email'])->where('IdCompte',$request->code)->first();
+
+//                     // return response($user,201);
+
+//                 }else{
+//                     return[
+//                         $entreprise_id ,
+//                         'message'=>'cette entreprise nexiste pas ici',
+//                     ];
+//                 }
+
+//             //end else
+//         }
+//     }
+//     // if (!Hash::check($entreprise_code, $entreprise_hash)) {
+//     //   return response()->json([
+//     //       'message'=>'erreur'
+//     //   ]);
+//     // }
+// }
+
+// public function loginOriginal(Request $request)
+// {
+//     //
+//     $data = $request->validate([
+//         // 'code'=> ['required'],
+//         'email' => ['required', 'string', 'email', 'max:255'],
+//         'password' => ['required'],
+//     ]);
+
+//     //$code_test = DB::table('users')->where('IdCompte',$request->code)->first();
+//     $code_test = DB::table('entreprises')->where('code',$request->code)->first();
+
+
+//     if( !isset($request->code)  )
+//     {
+//         $created_user_id = DB::table('entreprises')->select('created_user','code')->where('code',$request->code)->first();
+//         $user = User::where('email',$data['email'])->first();
+//             if($user){$token = $user->createToken('monappareil')->plainTextToken;}else{return response([
+//                 'message'=>'veillez creer un compte svp',
+//             ],401);}
+//             //$token = $user->createToken('monappareil')->plainTextToken;
+//         if($created_user_id != " " ){
+//             return response([
+//                 'message'=>'doit creer une entreprise obligatoirement',
+//                 'token' => $token,
+//             ],401);
+//         }else{
+//             if( $created_user_id->code == $request->code ){
+//                 if (!$user || !Hash::check($data['password'],$user->password))
+//                 {
+//                     return response([
+//                         'message'=>'Bads creads'
+//                     ],401);
+//                 }
+//                 $role=$user->assignRole('Gestionnaire');
+//                 $token = $user->createToken('monappareil')->plainTextToken;
+//                 $response=[
+//                 'sans',
+//                 'user'=>$user,
+//                 'token'=>$token,
+//                 'role'=>$role
+//                 ];
+//                 return response($response,201);
+//             }
+//         }
+//     }else{// code entreprise id saisie
+//         if($code_test == " " )
+//         {// fausse entreprise_id
+//             $response=[
+//                 $code_test,
+//                 'code saisie mais bad creds nnn',
+//                 'message' => 'information incorrect, veillez renseillez tous les champs ',
+//             ];
+//             return response($response,201);
+//         }else{// connect
+
+//                 $entreprise_id = DB::table('entreprises')->where('code',$request->code)
+//                                                          ->first();   //id entreprise
+
+//                 if( $entreprise_id != null )
+//                 {
+
+//                     $user_id = DB::table('entreprise_user')->where('entreprise_id',$entreprise_id->id)
+//                                                             ->first(); // id user de l'entreprise
+
+//                     if( $user_id != null ){
+//                         $user = User::where('id',$user_id->user_id)->first();
+//                         if( $user != null   ){
+//                             if (!$user || !Hash::check($data['password'],$user->password))
+//                             {
+//                                 return response([
+//                                     'message'=>'Bads creads'
+//                                 ],401);
+//                             }
+//                             $role=$user->assignRole('Gestionnaire');
+//                             $token = $user->createToken('monappareil')->plainTextToken;
+//                             $response=[
+//                                 'avec avec',
+//                                 'message' => ' felicitation',
+//                                 'user'=>$user,
+//                                 'entreprise_id'=>$entreprise_id,
+//                                 'token'=>$token,
+//                                 'role'=>$role,
+
+//                             ];
+//                             return response($response,201);
+
+//                         }else{
+//                             return[
+//                                 // $entreprise_id ,
+//                                 'message'=>'that user does not exist dans notre base de donnees',
+//                             ];
+
+//                         }
+//                     }else{
+//                         return[
+//                             // $entreprise_id ,
+//                             'message'=>'user bad creds',
+//                         ];
+
+//                     }
+
+//                     // $user = User::where('email',$data['email'])->where('IdCompte',$request->code)->first();
+
+//                     // return response($user,201);
+
+//                 }else{
+//                     return[
+//                         $entreprise_id ,
+//                         'message'=>'cette entreprise nexiste pas ici',
+//                     ];
+//                 }
+
+//             //end else
+//         }
+//     }
+//     // if (!Hash::check($entreprise_code, $entreprise_hash)) {
+//     //   return response()->json([
+//     //       'message'=>'erreur'
+//     //   ]);
+//     // }
+// }
+
+// public function login(Request $request)
+// {
+//     //
+
+//     $data = $request->validate([
+//         // 'code'=> ['required'],
+//         'email' => ['required', 'string', 'email', 'max:255'],
+//         'password' => ['required'],
+//     ]);
+
+//     // if (!Hash::check($entreprise_code, $entreprise_hash)) {
+//     //   return response()->json([
+//     //       'message'=>'erreur'
+//     //   ]);
+//     // }
+
+//     // $entreprise_id=Auth::user()->entreprise_id;
+//     // $entreprise_user= Entreprise::where('id',$entreprise_id)->get();
+//     // $entreprise_code = Entreprise::select('code')->where('id',$entreprise_id)->get();
+//     // $entreprise_hash = Hash::make($entreprise_code);
+
+//         $user = User::where('email',$data['email'])->first();
+//         // $user = User::select('*')->where('entreprise_id',$entreprise_id)->get();
+//         // $user = User::where('email',$data['email'])
+//         // ->where('entreprise_id',$entreprise_id)
+//         // ->first();
+
+//         if (!$user || !Hash::check($data['password'],$user->password)) {
+//         return response([
+//             'message'=>'Bads creads'
+//         ],401);
+
+//     }
+
+//     $role=$user->assignRole('Gestionnaire');
+//     $token = $user->createToken('monappareil')->plainTextToken;
+//     // $entreprise_id=Auth::user()->entreprise_id;
+//     // $entreprise_user= Entreprise::where('id',$entreprise_id)->get();
+//     // $entreprise_code = Entreprise::select('code')->where('id',$entreprise_id)->get();
+//     // $entreprise_hash = Hash::make($entreprise_code);
+//     $response=[
+//         // Auth::user()
+//     'user'=>$user,
+//     'token'=>$token,
+//     'role'=>$role
+//     ];
+
+//     return response($response,201);
+
+// }
+
+// public function store(Request $request)
+// {
+//     {
+//         //
+//         $data = $request->validate([
+//             // 'code'=> ['required'],
+//             'email' => ['required', 'string', 'email', 'max:255'],
+//             'password' => ['required'],
+//         ]);
+
+//         //$code_test = DB::table('users')->where('IdCompte',$request->code)->first();
+//         $code_test = DB::table('entreprises')->where('code',$request->code)->first();
+
+//         if( !isset($request->code)  )
+//         {
+//             $created_user_id = DB::table('entreprises')->select('created_user','code')->where('code',$request->code)->first();
+//             $user = User::where('email',$data['email'])->first();
+//                 if($user){$token = $user->createToken('monappareil')->plainTextToken;}else{return response([
+//                     'message'=>'veillez creer un compte svp',
+//                 ],401);}
+//                 //$token = $user->createToken('monappareil')->plainTextToken;
+//             if($created_user_id != " " ){
+//                 return response([
+//                     'message'=>'doit creer une entreprise obligatoirement',
+//                     'token' => $token,
+//                 ],401);
+//             }else{
+//                 if( $created_user_id->code == $request->code ){
+//                     if (!$user || !Hash::check($data['password'],$user->password))
+//                     {
+//                         return response([
+//                             'message'=>'Bads creads'
+//                         ],401);
+//                     }
+//                     $role=$user->assignRole('Gestionnaire');
+//                     $token = $user->createToken('monappareil')->plainTextToken;
+//                     $response=[
+//                     'sans',
+//                     'user'=>$user,
+//                     'token'=>$token,
+//                     'role'=>$role
+//                     ];
+//                     return response($response,201);
+//                 }
+//             }
+//         }else{// code entreprise id saisie
+//             if($code_test == " " )
+//             {// fausse entreprise_id
+//                 $response=[
+//                     $code_test,
+//                     'code saisie mais bad creds nnn',
+//                     'message' => 'information incorrect, veillez renseillez tous les champs ',
+//                 ];
+//                 return response($response,201);
+//             }else{// connect
+
+//                     $entreprise_id = DB::table('entreprises')->where('code',$request->code)
+//                                                              ->first();   //id entreprise
+
+//                     if( $entreprise_id != null )
+//                     {
+
+//                         $user_id = DB::table('entreprise_user')->where('entreprise_id',$entreprise_id->id)
+//                                                                 ->first(); // id user de l'entreprise
+
+//                         if( $user_id != null ){
+//                             $user = User::where('id',$user_id->user_id)->first();
+//                             if( $user != null   ){
+//                                 if (!$user || !Hash::check($data['password'],$user->password))
+//                                 {
+//                                     return response([
+//                                         'message'=>'Bads creads'
+//                                     ],401);
+//                                 }
+//                                 $role=$user->assignRole('Gestionnaire');
+//                                 $token = $user->createToken('monappareil')->plainTextToken;
+//                                 $response=[
+//                                     'avec avec',
+//                                     'message' => ' felicitation',
+//                                     'user'=>$user,
+//                                     'entreprise_id'=>$entreprise_id,
+//                                     'token'=>$token,
+//                                     'role'=>$role,
+
+//                                 ];
+//                                 return response($response,201);
+
+//                             }else{
+//                                 return[
+//                                     // $entreprise_id ,
+//                                     'message'=>'that user does not exist dans notre base de donnees',
+//                                 ];
+
+//                             }
+//                         }else{
+//                             return[
+//                                 // $entreprise_id ,
+//                                 'message'=>'user bad creds',
+//                             ];
+
+//                         }
+
+//                         // $user = User::where('email',$data['email'])->where('IdCompte',$request->code)->first();
+
+//                         // return response($user,201);
+
+//                     }else{
+//                         return[
+//                             $entreprise_id ,
+//                             'message'=>'cette entreprise nexiste pas ici',
+//                         ];
+//                     }
+
+//                 //end else
+//             }
+//         }
+//         // if (!Hash::check($entreprise_code, $entreprise_hash)) {
+//         //   return response()->json([
+//         //       'message'=>'erreur'
+//         //   ]);
+//         // }
+//     }
+// }
+
+// public function loginOriginal1(Request $request)
+// {
+//     //
+//     $data = $request->validate([
+//         // 'code'=> ['required'],
+//         'email' => ['required', 'string', 'email', 'max:255'],
+//         'password' => ['required'],
+//     ]);
+
+//     //$code_test = DB::table('users')->where('IdCompte',$request->code)->first();
+//     $code_test = DB::table('entreprises')->where('code',$request->code)->first();
+
+//     if( !isset($request->code)  )
+//     {
+//         $created_user_id = DB::table('entreprises')->select('created_user','code')->where('code',$request->code)->first();
+//         $user = User::where('email',$data['email'])->first();
+//             if($user){$token = $user->createToken('monappareil')->plainTextToken;}else{return response([
+//                 'message'=>'veillez creer un compte svp',
+//             ],401);}
+//             //$token = $user->createToken('monappareil')->plainTextToken;
+//         if($created_user_id != " " ){
+//             return response([
+//                 'message'=>'doit creer une entreprise obligatoirement',
+//                 'token' => $token,
+//             ],401);
+//         }else{
+//             if( $created_user_id->code == $request->code ){
+//                 if (!$user || !Hash::check($data['password'],$user->password))
+//                 {
+//                     return response([
+//                         'message'=>'Bads creads'
+//                     ],401);
+//                 }
+//                 $role=$user->assignRole('Gestionnaire');
+//                 $token = $user->createToken('monappareil')->plainTextToken;
+//                 $response=[
+//                 'sans',
+//                 'user'=>$user,
+//                 'token'=>$token,
+//                 'role'=>$role
+//                 ];
+//                 return response($response,201);
+//             }
+//         }
+//     }else{// code entreprise id saisie
+//         if($code_test == " " )
+//         {// fausse entreprise_id
+//             $response=[
+//                 $code_test,
+//                 'code saisie mais bad creds nnn',
+//                 'message' => 'information incorrect, veillez renseillez tous les champs ',
+//             ];
+//             return response($response,201);
+//         }else{// connect
+
+//                 $entreprise_id = DB::table('entreprises')->where('code',$request->code)->first();   //id entreprise
+//                 $userdd_id = DB::table('users')->where('email',$request->email)
+//                                                 ->where('password',Hash::make($data['password']) )
+//                                                 ->first();   //id entreprise
+
+//                 if( $entreprise_id != null )
+//                 {
+
+//                     $user_id = DB::table('entreprise_user')->where('entreprise_id',$entreprise_id->id)
+//                                                             ->first(); // id user de l'entreprise
+
+//                     if( $user_id != null ){
+//                         $user = User::where('id',$user_id->user_id)->first();
+//                         if( $user != null   ){
+//                             if (!$user || !Hash::check($data['password'],$user->password))
+//                             {
+//                                 return response([
+//                                     'message'=>'Bads creads'
+//                                 ],401);
+//                             }
+//                             $role=$user->assignRole('Gestionnaire');
+//                             $token = $user->createToken('monappareil')->plainTextToken;
+//                             $response=[
+//                                 'avec avec'=>$userdd_id ,
+//                                 'message' => ' felicitation',
+//                                 'user'=>$user,
+//                                 'entreprise_id'=>$entreprise_id,
+//                                 'token'=>$token,
+//                                 'role'=>$role,
+
+//                             ];
+//                             return response($response,201);
+
+//                         }else{
+//                             return[
+//                                 // $entreprise_id ,
+//                                 'message'=>'that user does not exist dans notre base de donnees',
+//                             ];
+
+//                         }
+//                     }else{
+//                         return[
+//                             // $entreprise_id ,
+//                             'message'=>'user bad creds',
+//                         ];
+
+//                     }
+
+//                     // $user = User::where('email',$data['email'])->where('IdCompte',$request->code)->first();
+
+//                     // return response($user,201);
+
+//                 }else{
+//                     return[
+//                         $entreprise_id ,
+//                         'message'=>'cette entreprise nexiste pas ici',
+//                     ];
+//                 }
+
+//             //end else
+//         }
+//     }
+//     // if (!Hash::check($entreprise_code, $entreprise_hash)) {
+//     //   return response()->json([
+//     //       'message'=>'erreur'
+//     //   ]);
+//     // }
+// }
+
+// public function loginOriginal(Request $request)
+// {
+//     //Validation
+//     $data = $request->validate([
+//         // 'code'=> ['required'],
+//         'email' => ['required', 'string', 'email', 'max:255'],
+//         'password' => ['required'],
+//     ]);
+
+//     //verifying username and password
+//     $user = User::where('email',$data['email'])->first();
+//     if (!$user || !Hash::check($data['password'],$user->password)) {
+//     return response([
+//         'message'=>'Bads creds  ==> email ou password incorrect'
+//     ],401);
+//      }
+
+//     //validation from tables ==>join *'entreprises.email'
+//     $users_info = DB::table('users')
+//         ->join('entreprise_user', 'entreprise_user.user_id', '=', 'users.id')
+//         ->join('entreprises', 'entreprise_user.entreprise_id', '=', 'entreprises.id')
+//         ->where('entreprises.code', $request->code)
+//         ->where('users.email',$request->email)
+//         ->where('users.password',Hash::check($data['password'],'users.password') )
+//         ->select('users.*', )
+//         ->first();
+
+//         if($users_info == null)
+//         {
+//             return response([
+//                 'message'=>'Bads creads => (Incorrect details)'
+//             ],401);
+//         }
+
+//         if($users_info != null)
+//         {
+//                  $usertest = User::where('id',$users_info->id )->get();//connected user
+//                  $role=$user->assignRole('Gestionnaire');  //assigning role
+//                  $token = $user->createToken('monappareil')->plainTextToken; //token
+//             return response([
+//                 'role'=>$role,
+//                 'token'=>$token,
+//                 'message'=>'cest zo dans carton',
+//             ],401);
+//         }
+
+//     //     $user = User::where('email',$users_info[0]->id )->first();//connected user
+//     //     $role=$user->assignRole('Gestionnaire'); //assigning role
+//     //     $token = $user->createToken('monappareil')->plainTextToken; //token
+
+//     //     if($users_info == null)
+//     //     {
+//     //         return response([
+//     //             'message'=>'Bads creads'
+//     //         ],401);
+//     //     }else{
+//     //         return response([
+//     //             'message'=>'Felicitation',
+//     //             'test'=>$users_info,
+//     //            // 'token'=>$token,
+
+//     //         ],401);
+//     //     }
+
+//     // //collecter l'information de la base de donees    Hash::make($data['password']
+//     // $user = User::where('email',$data['email'])->first();
+//     //     if (!$user || !Hash::check($data['password'],$user->password)) {
+//     //     return response([
+//     //         'message'=>'Bads creads'
+//     //     ],401);
+//     // }
+
+//     $role=$user->assignRole('Gestionnaire');
+//     $token = $user->createToken('monappareil')->plainTextToken;
+
+//     $response=[
+//         // Auth::user()
+//     'test'=>$users_info,
+//     'user'=>$user,
+//     'token'=>$token,
+//     //'role'=>$role
+//     ];
+
+//     return response($response,201);
+
+// }
+
+// public function loginOriginal1(Request $request)
+// {
+//     //
+//     $data = $request->validate([
+//         // 'code'=> ['required'],
+//         'email' => ['required', 'string', 'email', 'max:255'],
+//         'password' => ['required'],
+//     ]);
+
+//     //$code_test = DB::table('users')->where('IdCompte',$request->code)->first();
+//     $code_test = DB::table('entreprises')->where('code',$request->code)->first();
+
+//     if( !isset($request->code)  )
+//     {
+//         $created_user_id = DB::table('entreprises')->select('created_user','code')->where('code',$request->code)->first();
+//         $user = User::where('email',$data['email'])->first();
+//             if($user){$token = $user->createToken('monappareil')->plainTextToken;}else{return response([
+//                 'message'=>'veillez creer un compte svp',
+//             ],401);}
+//             //$token = $user->createToken('monappareil')->plainTextToken;
+//         if($created_user_id != " " ){
+//             return response([
+//                 'message'=>'doit creer une entreprise obligatoirement',
+//                 'token' => $token,
+//             ],401);
+//         }else{
+//             if( $created_user_id->code == $request->code ){
+//                 if (!$user || !Hash::check($data['password'],$user->password))
+//                 {
+//                     return response([
+//                         'message'=>'Bads creads'
+//                     ],401);
+//                 }
+//                 $role=$user->assignRole('Gestionnaire');
+//                 $token = $user->createToken('monappareil')->plainTextToken;
+//                 $response=[
+//                 'sans',
+//                 'user'=>$user,
+//                 'token'=>$token,
+//                 'role'=>$role
+//                 ];
+//                 return response($response,201);
+//             }
+//         }
+//     }else{// code entreprise id saisie
+//         if($code_test == " " )
+//         {// fausse entreprise_id
+//             $response=[
+//                 $code_test,
+//                 'code saisie mais bad creds nnn',
+//                 'message' => 'information incorrect, veillez renseillez tous les champs ',
+//             ];
+//             return response($response,201);
+//         }else{// connect
+
+//                 $entreprise_id = DB::table('entreprises')->where('code',$request->code)->first();   //id entreprise
+//                 $userdd_id = DB::table('users')->where('email',$request->email)
+//                                                 ->where('password',Hash::make($data['password']) )
+//                                                 ->first();   //id entreprise
+
+//                 if( $entreprise_id != null )
+//                 {
+
+//                     $user_id = DB::table('entreprise_user')->where('entreprise_id',$entreprise_id->id)
+//                                                             ->first(); // id user de l'entreprise
+
+//                     if( $user_id != null ){
+//                         $user = User::where('id',$user_id->user_id)->first();
+//                         if( $user != null   ){
+//                             if (!$user || !Hash::check($data['password'],$user->password))
+//                             {
+//                                 return response([
+//                                     'message'=>'Bads creads'
+//                                 ],401);
+//                             }
+//                             $role=$user->assignRole('Gestionnaire');
+//                             $token = $user->createToken('monappareil')->plainTextToken;
+//                             $response=[
+//                                 'avec avec'=>$userdd_id ,
+//                                 'message' => ' felicitation',
+//                                 'user'=>$user,
+//                                 'entreprise_id'=>$entreprise_id,
+//                                 'token'=>$token,
+//                                 'role'=>$role,
+
+//                             ];
+//                             return response($response,201);
+
+//                         }else{
+//                             return[
+//                                 // $entreprise_id ,
+//                                 'message'=>'that user does not exist dans notre base de donnees',
+//                             ];
+
+//                         }
+//                     }else{
+//                         return[
+//                             // $entreprise_id ,
+//                             'message'=>'user bad creds',
+//                         ];
+
+//                     }
+
+//                     // $user = User::where('email',$data['email'])->where('IdCompte',$request->code)->first();
+
+//                     // return response($user,201);
+
+//                 }else{
+//                     return[
+//                         $entreprise_id ,
+//                         'message'=>'cette entreprise nexiste pas ici',
+//                     ];
+//                 }
+
+//             //end else
+//         }
+//     }
+//     // if (!Hash::check($entreprise_code, $entreprise_hash)) {
+//     //   return response()->json([
+//     //       'message'=>'erreur'
+//     //   ]);
+//     // }
+// }
+
+// public function store(Request $request)
+// {
+//     {
+//         //
+//         $data = $request->validate([
+//             // 'code'=> ['required'],
+//             'email' => ['required', 'string', 'email', 'max:255'],
+//             'password' => ['required'],
+//         ]);
+
+//         //$code_test = DB::table('users')->where('IdCompte',$request->code)->first();
+//         $code_test = DB::table('entreprises')->where('code',$request->code)->first();
+
+//         if( !isset($request->code)  )
+//         {
+//             $created_user_id = DB::table('entreprises')->select('created_user','code')->where('code',$request->code)->first();
+//             $user = User::where('email',$data['email'])->first();
+//                 if($user){$token = $user->createToken('monappareil')->plainTextToken;}else{return response([
+//                     'message'=>'veillez creer un compte svp',
+//                 ],401);}
+//                 //$token = $user->createToken('monappareil')->plainTextToken;
+//             if($created_user_id != " " ){
+//                 return response([
+//                     'message'=>'doit creer une entreprise obligatoirement',
+//                     'token' => $token,
+//                 ],401);
+//             }else{
+//                 if( $created_user_id->code == $request->code ){
+//                     if (!$user || !Hash::check($data['password'],$user->password))
+//                     {
+//                         return response([
+//                             'message'=>'Bads creads'
+//                         ],401);
+//                     }
+//                     $role=$user->assignRole('Gestionnaire');
+//                     $token = $user->createToken('monappareil')->plainTextToken;
+//                     $response=[
+//                     'sans',
+//                     'user'=>$user,
+//                     'token'=>$token,
+//                     'role'=>$role
+//                     ];
+//                     return response($response,201);
+//                 }
+//             }
+//         }else{// code entreprise id saisie
+//             if($code_test == " " )
+//             {// fausse entreprise_id
+//                 $response=[
+//                     $code_test,
+//                     'code saisie mais bad creds nnn',
+//                     'message' => 'information incorrect, veillez renseillez tous les champs ',
+//                 ];
+//                 return response($response,201);
+//             }else{// connect
+
+//                     $entreprise_id = DB::table('entreprises')->where('code',$request->code)
+//                                                              ->first();   //id entreprise
+
+//                     if( $entreprise_id != null )
+//                     {
+
+//                         $user_id = DB::table('entreprise_user')->where('entreprise_id',$entreprise_id->id)
+//                                                                 ->first(); // id user de l'entreprise
+
+//                         if( $user_id != null ){
+//                             $user = User::where('id',$user_id->user_id)->first();
+//                             if( $user != null   ){
+//                                 if (!$user || !Hash::check($data['password'],$user->password))
+//                                 {
+//                                     return response([
+//                                         'message'=>'Bads creads'
+//                                     ],401);
+//                                 }
+//                                 $role=$user->assignRole('Gestionnaire');
+//                                 $token = $user->createToken('monappareil')->plainTextToken;
+//                                 $response=[
+//                                     'avec avec',
+//                                     'message' => ' felicitation',
+//                                     'user'=>$user,
+//                                     'entreprise_id'=>$entreprise_id,
+//                                     'token'=>$token,
+//                                     'role'=>$role,
+
+//                                 ];
+//                                 return response($response,201);
+
+//                             }else{
+//                                 return[
+//                                     // $entreprise_id ,
+//                                     'message'=>'that user does not exist dans notre base de donnees',
+//                                 ];
+
+//                             }
+//                         }else{
+//                             return[
+//                                 // $entreprise_id ,
+//                                 'message'=>'user bad creds',
+//                             ];
+
+//                         }
+
+//                         // $user = User::where('email',$data['email'])->where('IdCompte',$request->code)->first();
+
+//                         // return response($user,201);
+
+//                     }else{
+//                         return[
+//                             $entreprise_id ,
+//                             'message'=>'cette entreprise nexiste pas ici',
+//                         ];
+//                     }
+
+//                 //end else
+//             }
+//         }
+//         // if (!Hash::check($entreprise_code, $entreprise_hash)) {
+//         //   return response()->json([
+//         //       'message'=>'erreur'
+//         //   ]);
+//         // }
+//     }
+// }

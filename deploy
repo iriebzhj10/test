@@ -1,0 +1,1 @@
+rsync -av ./ df0b5_oumar@df0b5.ftp.infomaniak.com:~/sites/ediqia/prod/back --exclude 'storage' --exclude '.git' --exclude '.vscodev' --exclude 'node_modules' --exclude '.env' --exclude 'public/.htaccess'

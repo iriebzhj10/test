@@ -1,0 +1,24 @@
+{
+	"folders": [
+		{
+			"name": "ediqia-backend-copie",
+			"path": "."
+		},
+		{
+			"name": "ediqia-frontend-copie",
+			"path": "..\\ediqia-frontend-copie"
+		},
+		{
+			"name": "livraison",
+			"path": "..\\livraison"
+		},
+		{
+			"name": "delivery-app",
+			"path": "..\\delivery-app"
+		},
+		{
+			"name": "JS",
+			"path": "..\\JS"
+		}
+	]
+}

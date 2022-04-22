@@ -1,0 +1,113 @@
+.custom-file-container__image-preview{
+    height: 50px;
+}
+.btn-indigo{
+    color: #E5E6FA !important;
+    background-color: #450077 !important;
+    border-color: #450077;
+    padding:0.75rem 1.25rem
+}
+.bg-lavande{
+    background-color: #E5E6FA !important;
+}
+.text-indigo{
+    color: #450077 !important;
+}
+.text-lavande{
+    color: #E5E6FA !important;
+}
+.spartan{
+    font-family: 'Spartan',sans-serif;
+}
+.montserrat{
+    font-family: 'Montserrat', sans-serif;
+}
+.form-image .l-image {
+    background-image: url(../img/entreprise.png);
+    background-color: #450077;
+}
+.form-form .form-form-wrap p.signup-link a {
+    color: #EFC300;
+    border-bottom: 1px solid;
+}
+
+.navbar .navbar-item .nav-item.theme-logo a img {
+    width: 79px;
+    height: 56px;
+    border-radius: 5px;
+}
+.sidebar-theme #compactSidebar {
+    background: #450077;
+}
+.navbar{
+    background-color: #E5E6FA;
+    border-bottom: 7px solid #EFC300;
+}
+.navbar .navbar-item .nav-item.dropdown a svg {
+    color: #450077;
+}
+
+.form-control{
+    background-color: white;
+}
+
+::-moz-selection {
+    /* Code for Firefox */
+    color: #450077;
+    background: transparent; }
+
+  ::selection {
+    color: #450077;
+    background: transparent; }
+
+.custom-file-container label {
+    color: #450077;
+}
+.modal-header{
+    background-color: #450077;
+    border-bottom: 5px solid #EFC300;
+    border-bottom-color:#EFC300;
+    color: #E5E6FA;
+}
+
+.close {
+    opacity: 100%;
+    color: #E5E6FA;
+}
+.close:hover{
+    color: #d1d3ec;
+}
+.no-border {
+  border:none;
+}
+.feather-trash-2{
+    color: #e7515a;
+}
+
+.feather-edit-2{
+    color: #8dbf42;
+}
+
+.btn-outline-success:hover {
+    color: #fff !important;
+    background-color: #8dbf42;
+}
+
+.bg-jaune-ambre{
+    background-color: #EFC300;
+}
+
+.text-jaune-ambre{
+    color: #EFC300;
+}
+
+.savoir-plus:hover{
+    font-size: 20px;
+    color: #EFC300;
+}
+.btn-jaune-ambre{
+    background-color: #EFC300;
+    border-color: #EFC300;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+

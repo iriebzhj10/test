@@ -1,0 +1,58 @@
+.main-menu .navbar-header .navbar-brand .brand-text {
+    color: #450077;
+}
+
+[dir="ltr"] .main-menu.menu-light .navigation > li.active > a {
+    background: linear-gradient(118deg, #450077, rgba(115, 103, 240, 0.7));
+}
+a {
+    color: #450077;
+}
+.bg-indigo {
+    border-color: #450077 !important;
+    background-color: #450077 !important;
+}
+.bg-jaune {
+    border-color: #EFC300 !important;
+    background-color: #EFC300 !important;
+}
+.bg-indigo:focus{
+    border-color: #450077 !important;
+    background-color: #450077 !important;
+}
+[dir] .custom-control-input:checked ~ .custom-control-label::before {
+    border-color: #450077;
+    background-color: #450077;
+}
+a:hover {
+    color: #EFC300;
+}
+.spinner-border {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    vertical-align: text-bottom;
+}
+.chargement {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100vh;
+}
+.text-indigo{
+    color: #450077;
+}
+.text-jaune{
+    color: #EFC300;
+}
+
+.text-violet{
+    color: #7367f0;
+}
+[dir="ltr"] .bg-gradient-primary, [dir="ltr"] .btn-gradient-primary {
+    background-image: linear-gradient(47deg, #32CD32, #32CD32);
+}
+[dir="ltr"] .bg-gradient-primary:focus, [dir="ltr"] .btn-gradient-primary:focus{
+    background-image: linear-gradient(47deg, #32CD32, #32CD32);
+}
